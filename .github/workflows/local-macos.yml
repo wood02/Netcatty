@@ -31,6 +31,7 @@ jobs:
       - name: Download bundled clients
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          ET_BIN_OWNER: binaricat
         run: |
           npm run fetch:mosh -- --platform=darwin --arch=universal --resolve-release
           npm run fetch:et -- --platform=darwin --arch=universal --resolve-release
