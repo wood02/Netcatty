@@ -82,7 +82,7 @@ jobs:
       - name: Verify packaged app
         run: |
           codesign --verify --deep --strict --verbose=2 release/mac-arm64/Netcatty.app
-          lipo -verify_arch arm64 release/mac-arm64/Netcatty.app/Contents/MacOS/Netcatty
+          lipo release/mac-arm64/Netcatty.app/Contents/MacOS/Netcatty -verify_arch arm64
           node scripts/test-packaged-ssh-ciphers.cjs
 
       - name: Generate checksums
