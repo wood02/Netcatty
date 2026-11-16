@@ -1,23 +1,58 @@
 name: macOS Apple Silicon local build
 
 on:
-  push:
-    branches:
-      - build/macos-local
+  schedule:
+    - cron: "0 1 * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: macos-arm64-local
+  cancel-in-progress: false
+
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      source_sha: ${{ steps.upstream.outputs.source_sha }}
+      build_required: ${{ steps.upstream.outputs.build_required }}
+    steps:
+      - name: Check for upstream updates
+        id: upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          source_sha=$(gh api repos/binaricat/Netcatty/commits/main --jq '.sha')
+          last_built_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/matching-refs/heads/build/macos-source" --jq '[.[] | select(.ref == "refs/heads/build/macos-source")][0].object.sha // ""')
+          echo "source_sha=${source_sha}" >> "$GITHUB_OUTPUT"
+          echo "Upstream commit: ${source_sha}" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$source_sha" == "$last_built_sha" && "$EVENT_NAME" != "workflow_dispatch" ]]; then
+            echo "build_required=false" >> "$GITHUB_OUTPUT"
+            echo "This upstream commit is already built." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "build_required=true" >> "$GITHUB_OUTPUT"
+            echo "Building this upstream commit." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   build:
+    needs: check
+    if: needs.check.outputs.build_required == 'true'
     runs-on: macos-latest
     timeout-minutes: 40
+    permissions:
+      contents: write
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          repository: binaricat/Netcatty
+          ref: ${{ needs.check.outputs.source_sha }}
 
       - name: Setup Node
         uses: actions/setup-node@v7
@@ -40,7 +75,7 @@ jobs:
 
       - name: Build Apple Silicon package
         run: |
-          npm pkg set version="0.0.0-sha-${GITHUB_SHA:0:7}"
+          npm pkg set version="0.0.0-sha-$(git rev-parse --short=7 HEAD)"
           npm run build
           npx electron-builder --config electron-builder.config.cjs --mac dmg --arm64 -c.mac.identity=- -c.mac.notarize=false --publish=never
 
@@ -58,9 +93,12 @@ jobs:
       - name: Upload installer
         uses: actions/upload-artifact@v7
         with:
-          name: netcatty-macos-arm64
+          name: netcatty-macos-arm64-${{ needs.check.outputs.source_sha }}
           path: |
             release/*.dmg
             release/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
+
+      - name: Record successful upstream build
+        run: git push "https://github.com/${GITHUB_REPOSITORY}.git" HEAD:refs/heads/build/macos-source
