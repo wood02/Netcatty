@@ -1,0 +1,65 @@
+name: macOS Apple Silicon local build
+
+on:
+  push:
+    branches:
+      - build/macos-local
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 40
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download bundled clients
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          npm run fetch:mosh -- --platform=darwin --arch=universal --resolve-release
+          npm run fetch:et -- --platform=darwin --arch=universal --resolve-release
+          test -x resources/mosh/darwin-universal/mosh-client
+          test -x resources/et/darwin-universal/et
+
+      - name: Build Apple Silicon package
+        run: |
+          npm pkg set version="0.0.0-sha-${GITHUB_SHA:0:7}"
+          npm run build
+          npx electron-builder --config electron-builder.config.cjs --mac dmg --arm64 -c.mac.identity=- -c.mac.notarize=false --publish=never
+
+      - name: Verify packaged app
+        run: |
+          codesign --verify --deep --strict --verbose=2 release/mac-arm64/Netcatty.app
+          lipo -verify_arch arm64 release/mac-arm64/Netcatty.app/Contents/MacOS/Netcatty
+          node scripts/test-packaged-ssh-ciphers.cjs
+
+      - name: Generate checksums
+        run: |
+          cd release
+          shasum -a 256 *.dmg > SHA256SUMS.txt
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: netcatty-macos-arm64
+          path: |
+            release/*.dmg
+            release/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
